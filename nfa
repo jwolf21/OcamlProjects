@@ -1,0 +1,163 @@
+open List 
+open Sets
+(*********)
+(* Types *)
+(*********)
+
+type ('q, 's) transition = 'q * 's option * 'q
+
+type ('q, 's) nfa_t = {
+  sigma: 's list;
+  qs: 'q list;
+  q0: 'q;
+  fs: 'q list;
+  delta: ('q, 's) transition list;
+}
+
+(***********)
+(* Utility *)
+(***********)
+
+(* explode converts a string to a character list *)
+let explode (s: string) : char list =
+  let rec exp i l =
+    if i < 0 then l else exp (i - 1) (s.[i] :: l)
+  in
+  exp (String.length s - 1) []
+    
+
+
+(****************)
+(* Part 1: NFAs *)
+(****************)
+
+let contents z = 
+  match z with
+  |None -> None
+  |Some c -> c;;
+
+let move (nfa: ('q,'s) nfa_t) (qs: 'q list) (s: 's option) : 'q list =
+  let rec build lst acc = 
+    match lst with
+    |[] -> acc
+    |h::tl -> match h with
+      |(start, None, fin) -> if List.mem start qs && s = None && List.mem fin acc = false 
+          then build tl (fin::acc) else build tl acc
+      |(start, t, fin) -> if List.mem start qs && s = t && List.mem fin acc = false 
+          then build tl (fin::acc) else build tl acc
+  in build nfa.delta [];; 
+
+let uniq_cons x xs = if List.mem x xs then xs else x :: xs 
+let remove_from_right xs = List.fold_right uniq_cons xs []
+
+let e_closure (nfa: ('q,'s) nfa_t) (qs: 'q list) : 'q list = 
+  let rec build lst acc = 
+    match lst with
+    |[] -> acc
+    |h::tl -> let states = move nfa [h] None in 
+        build tl (acc @ [h] @ states @ (build (minus states [h]) []))
+  in remove_from_right (build qs []);;
+
+
+let explode s =
+  let rec exp i l =
+    if i < 0 then l else exp (i - 1) (s.[i] :: l) in
+  exp (String.length s - 1) []
+    
+
+(*******************************)
+(* Part 2: Subset Construction *)
+(*******************************)
+
+let rec move_all_trans nfa transitions states acc = 
+  match transitions with 
+  |[] -> acc
+  |h::tl -> let t = move nfa states (Some h) in
+      if List.mem t acc = false then 
+        move_all_trans nfa tl states acc @ [e_closure nfa t]
+      else move_all_trans nfa tl states acc;;
+
+
+let new_states (nfa: ('q,'s) nfa_t) (qs: 'q list) : 'q list list =
+  move_all_trans nfa nfa.sigma qs [];;
+
+let rec final_helper nfa transitions states acc = 
+  match transitions with 
+  |[] -> acc
+  |h::tl -> let t = move nfa states (Some h) in 
+      final_helper nfa tl states acc @ [(states, Some h, e_closure nfa t)];;
+  
+let new_trans (nfa: ('q,'s) nfa_t) (qs: 'q list) : ('q list, 's) transition list =
+  final_helper nfa nfa.sigma qs [];;
+
+  let rec helper_fin nfa transitions states =
+    match states with
+    |[] -> false
+    |h::tl -> if List.mem h transitions then 
+          true else helper_fin nfa transitions tl;;
+    
+  let new_finals (nfa: ('q,'s) nfa_t) (qs: 'q list) : 'q list list =
+    if helper_fin nfa nfa.fs qs then [qs] else [];;
+
+    let rec nfa_to_dfa_step (nfa: ('q,'s) nfa_t) (dfa: ('q list, 's) nfa_t)
+    (work: 'q list list) : ('q list, 's) nfa_t = 
+  match work with 
+  |[] -> dfa
+  |head::tail -> 
+      if head = [] then nfa_to_dfa_step nfa dfa tail
+      else 
+        let s = new_states nfa head in
+        let trans = new_trans nfa head in 
+        let final = new_finals nfa head in
+        let dfa_next = {
+          sigma = dfa.sigma;
+          qs = union dfa.qs [head];
+          q0 = dfa.q0;
+          fs = union dfa.fs final;
+          delta = union dfa.delta trans;
+        } in nfa_to_dfa_step nfa dfa_next (minus (union tail s) dfa.qs)
+  
+        
+let nfa_to_dfa (nfa: ('q,'s) nfa_t) : ('q list, 's) nfa_t =
+  if nfa.sigma = [] && nfa.fs = [nfa.q0] then 
+    let dfa = {
+      sigma = [];
+      qs = [[nfa.q0]];
+      q0 = [nfa.q0];
+      fs = [[nfa.q0]];
+      delta = [];
+    } in dfa 
+  else
+    let start = e_closure nfa [nfa.q0] in
+    let dfa = {
+      sigma = nfa.sigma;
+      qs = [start];
+      q0 = start;
+      fs = [];
+      delta = [];
+    } in nfa_to_dfa_step nfa dfa [start];;
+  
+  
+  
+    let rec find_trans transitions s curr= 
+    match transitions with 
+    |[] -> curr
+    |firs::res -> match firs with 
+      |(st,t,f) -> 
+          if (t = (Some s)) && f <> [] && st = curr
+          then let curr = f in curr
+          else if t = None && f <> [] && st = curr
+          then let curr = f in find_trans res s curr
+          else find_trans res s curr;;
+  
+  let accept (nfa: ('q,char) nfa_t) (s: string) : bool =
+    let new_nfa = nfa_to_dfa nfa in 
+    let str_list = explode s in 
+    let c = new_nfa.q0 in 
+    let rec travandc s curr =
+      match s with 
+      |[] -> if List.mem curr new_nfa.fs then true else false
+      |hd::tl -> let next = find_trans new_nfa.delta hd curr in 
+          if next <> curr then let curr = next in travandc tl curr 
+          else false
+    in travandc str_list c;;
